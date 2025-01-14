@@ -7,6 +7,7 @@ A thread-safe wrapper around Flow Production Tracking (formerly ShotGrid) that e
 - 🔍 Retrieves query fields (not supported in base `shotgun_api3`)
 - 🧵 Thread-safe operations (not supported in base `shotgun_api3`)
 - ⚡ Parallel processing for improved performance
+- 🔄 Streaming results for processing large datasets
 - 🔌 Drop-in replacement for basic shotgun_api3 operations
 
 ## Installation
@@ -31,6 +32,7 @@ This wrapper addresses both issues by:
 - Implementing query field retrieval
 - Adding thread safety
 - Parallelizing query field retrieval for better performance
+- Supporting streaming for large result sets
 
 ## Usage
 
@@ -52,12 +54,20 @@ This wrapper addresses both issues by:
         ["code", "sg_status_list", "sg_query_field"]
     )
 
-    # Find multiple shots
+    # Find multiple shots (returns all results at once)
     shots = fpt.find(
         "Shot",
         [["id", "in", [1234, 12345]]],
         ["code", "sg_status_list", "sg_query_field"]
     )
+
+    # Stream results one by one
+    for shot in fpt.yield_find(
+        "Shot",
+        [["id", "in", [1234, 12345]]],
+        ["code", "sg_status_list", "sg_query_field"]
+    ):
+        process_shot(shot)  # Process each shot as it becomes ready
 
 ### API Reference
 
@@ -67,8 +77,9 @@ FPT does not change the base API, but rather extends it with additional function
 ## Performance Notes
 
 - Query fields are retrieved in parallel using threads
-- Results are returned only after all query fields are retrieved
-- Future versions may implement asynchronous retrieval using futures
+- For standard find(), results are returned after all query fields are retrieved
+- yield_find() streams results as they become available
+- Connection pooling reduces overhead for multiple requests
 
 ## Contributing
 

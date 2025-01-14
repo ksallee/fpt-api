@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
 import urllib.parse
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Iterator
 
 import certifi
 import urllib3
@@ -210,6 +210,77 @@ class FPT(BaseShotgun):
 
         processed = self._process_query_fields([entity], args, kwargs)
         return processed[0] if processed else None
+
+    def yield_find(self, *args: Any, **kwargs: Any) -> Iterator[Entity]:
+        """Find entities and yield them one by one as they are processed.
+
+        Similar to find() but yields entities as soon as their query fields are processed
+        rather than waiting for all entities to be ready.
+
+        :returns: Iterator yielding matching entities with resolved fields
+        """
+        process_query = kwargs.pop("process_query_fields", True)
+
+        # Get all entities first since the base API doesn't support streaming
+        entities = super().find(*args, **kwargs)
+        if not entities or not process_query:
+            yield from entities
+            return
+
+        # Extract query parameters
+        if args:
+            entity_type = args[0]
+            fields = args[2] if len(args) > 2 else kwargs.get("fields", [])
+        else:
+            entity_type = kwargs.get("entity_type")
+            fields = kwargs.get("fields", [])
+
+        # Use cached schema
+        if entity_type not in self._schema_cache:
+            self._schema_cache[entity_type] = self.schema_field_read(entity_type)
+        schema = self._schema_cache[entity_type]
+
+        # Get query fields
+        requested_fields = set(fields)
+        query_fields = {
+            field: schema[field]
+            for field in requested_fields
+            if field in schema and "query" in schema[field].get("properties", {})
+        }
+
+        if not query_fields:
+            yield from entities
+            return
+
+        # Process entities and fields in parallel, yielding as they complete
+        max_workers = min(8, len(entities) * len(query_fields))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Process each entity
+            for entity in entities:
+                entity_id = entity["id"]
+                result_entity = entity.copy()
+                futures = []
+
+                # Submit futures for each query field
+                for field_name, field_schema in query_fields.items():
+                    future = executor.submit(
+                        self._resolve_query_field,
+                        field_name=field_name,
+                        field_schema=field_schema,
+                        parent_entity={"type": entity["type"], "id": entity_id}
+                    )
+                    futures.append((future, field_name))
+
+                # Process futures for this entity
+                for future, field_name in futures:
+                    try:
+                        result = future.result(timeout=30)
+                        result_entity[field_name] = result
+                    except Exception as e:
+                        logger.error(f"Error processing query field {field_name}: {e}")
+                        result_entity[field_name] = None
+
+                yield result_entity
 
     def _process_query_fields(
         self, entities: List[Entity], args: Tuple, kwargs: Dict
