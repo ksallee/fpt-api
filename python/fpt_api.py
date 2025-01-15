@@ -187,7 +187,11 @@ class FPT(BaseShotgun):
         )
 
     def find(self, *args: Any, **kwargs: Any) -> List[Entity]:
-        """Find entities with parallel query field processing."""
+        """
+        Find entities with parallel query field processing.
+
+        :returns: List of Entities found.
+        """
         process_query = kwargs.pop("process_query_fields", True)
         if not process_query:
             return super().find(*args, **kwargs)
@@ -221,7 +225,11 @@ class FPT(BaseShotgun):
         return entities
 
     def find_one(self, *args: Any, **kwargs: Any) -> Optional[Entity]:
-        """Find a single entity with parallel query field processing."""
+        """
+        Find entities with parallel query field processing.
+
+        :returns: The Entity found or None if not found.
+        """
         process_query = kwargs.pop("process_query_fields", True)
 
         if process_query:
@@ -256,7 +264,11 @@ class FPT(BaseShotgun):
         return result_entity
 
     def yield_find(self, *args: Any, **kwargs: Any) -> Iterator[Entity]:
-        """Find entities and yield them one by one as they are processed."""
+        """
+        Find entities and yield them one by one as they are processed.
+
+        :yields: Entities found.
+        """
         process_query = kwargs.pop("process_query_fields", True)
 
         # Prepare fields and handle dotted fields
