@@ -2,9 +2,12 @@
 
 A thread-safe wrapper around Flow Production Tracking (formerly ShotGrid) that extends [shotgun_api3](https://github.com/shotgunsoftware/python-api) to support query field retrieval and parallel processing.
 
+It also supports the retrieval of all Entities of a given Page, applying the Page filters.
+
 ## Features
 
 - 🔍 Retrieves query fields (not supported in base `shotgun_api3`)
+- 📄 Retrieves all Entities of a given Page, applying the Page filters
 - 🧵 Thread-safe operations (not supported in base `shotgun_api3`)
 - ⚡ Parallel processing for improved performance
 - 🔄 Streaming results for processing large datasets
@@ -77,10 +80,22 @@ This wrapper addresses both issues by:
         ["entity.Shot.sg_assets_count"]
     )
 
+    # Get all Entities of a given Page, applying the Page filters
+    for shot in fpt.yield_page_entities(5105):
+        print(shot)
+
+
 ### API Reference
 
 Check out the [Official Shotgun API Reference](https://developers.shotgridsoftware.com/python-api/reference.html) for more information on the base `shotgun_api3` library.
 FPT does not change the base API, but rather extends it with additional functionality.
+
+Yield all Entities of a given Page, applying the Page filters:
+
+    fpt.yield_page_entities(page_id, additional_filters, fields)
+    page_id: int
+    additional_filters: list of optional additional SG filters
+    fields: list of SG fields, if not provided it will use the fields displayed in the Page
 
 ## Performance Notes
 

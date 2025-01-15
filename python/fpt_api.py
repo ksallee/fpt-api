@@ -55,6 +55,7 @@ class FPT(BaseShotgun):
         from_handle: Optional[Shotgun] = None,
         timeout_secs: Optional[float] = None,
         connect: bool = True,
+        max_workers: int = 8,
         **kwargs: Any
     ) -> None:
         """
@@ -63,8 +64,10 @@ class FPT(BaseShotgun):
         :param from_handle: Existing FPT instance to copy settings from
         :param timeout_secs: Connection timeout in seconds
         :param connect: Whether to establish connection immediately
+        :param max_workers: Maximum number of worker threads for parallel processing
         """
         self._schema_cache: Dict[str, Dict] = {}
+        self._max_workers = max_workers
 
         # Configure connection parameters
         kparams: Dict[str, Any] = {}
@@ -309,8 +312,7 @@ class FPT(BaseShotgun):
         }
 
         # Process entities one by one
-        max_workers = min(8, len(query_fields) + len(dotted_query_map))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             for entity in entities:
                 # Process query fields
                 futures, result_entity = self._process_entity_query_fields(
@@ -333,26 +335,115 @@ class FPT(BaseShotgun):
 
                 yield result_entity
 
-    def _find_in_dict(self, obj: Any, target_key: str) -> List[Any]:
+    def yield_page_entities(
+            self,
+            page_id: int,
+            additional_filters: Optional[List] = None,
+            fields: Optional[List[str]] = None,
+    ) -> Iterator[Entity]:
         """
-        Recursively find all values for a given key in a nested dictionary/list structure.
+        Yield entities from a Page, applying the Page filters.
 
-        :param obj: Object to search through (dict, list, or other)
-        :param target_key: Key to find
-        :returns: List of found values
+        :param page_id: ID of the Page to process
+        :param additional_filters: Additional filters to apply
+        :param fields: Fields to retrieve
+        :yields: Entities found
         """
-        results = []
+        # Get page settings
+        page = self.find_one("Page", [["id", "is", page_id]], ["id"])
+        if not page:
+            raise ValueError(f"Page {page_id} not found")
 
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                if key == target_key:
-                    results.append(value)
-                results.extend(self._find_in_dict(value, target_key))
-        elif isinstance(obj, list):
-            for item in obj:
-                results.extend(self._find_in_dict(item, target_key))
+        page_settings = self.find(
+            "PageSetting",
+            [["page", "is", page]],
+            ["settings_json"]
+        )
 
-        return results
+        # Process settings to get entity type and columns
+        entity_type = None
+        columns = None
+        filters = []
+
+        if page_settings:
+            # Get the first settings
+            first_json = page_settings[0]["settings_json"]
+            if isinstance(first_json, dict):
+                body_settings = first_json.get("children", {}).get("body", {}).get("settings", {})
+
+                # Get entity type and columns
+                entity_type = body_settings.get("entity_type")
+                list_content = (first_json.get("children", {})
+                                .get("body", {})
+                                .get("children", {})
+                                .get("list_content", {})
+                                .get("settings", {}))
+                columns = list_content.get("columns", [])
+
+                # Get main filters from body settings
+                if "filters" in body_settings:
+                    filters.extend(self._process_page_filters(body_settings["filters"]))
+
+            # Get panel filters from last settings
+            if len(page_settings) > 1:
+                last_json = page_settings[-1]["settings_json"]
+            else:
+                last_json = first_json
+
+            # Handle both dictionary and list formats for settings_json
+            if isinstance(last_json, dict):
+                panel_settings = (last_json.get("children", {})
+                                  .get("body", {})
+                                  .get("settings", {})
+                                  .get("filter_panel_main_entity_type_settings", {}))
+
+                if "panel_filters" in panel_settings:
+                    filters.extend(self._process_page_filters(panel_settings["panel_filters"]))
+
+            elif isinstance(last_json, list):
+                # Handle list format where each item may have panel filters
+                for item in last_json:
+                    if isinstance(item, dict):
+                        panel_filters = (item.get("settings", {})
+                                         .get("filter_panel_main_entity_type_settings", {})
+                                         .get("panel_filters"))
+                        if panel_filters:
+                            filters.extend(self._process_page_filters(panel_filters))
+
+        if not entity_type:
+            raise ValueError("Could not determine entity type from page settings")
+
+        # Wrap all filters in an 'all' operator if there are multiple
+        if len(filters) > 1:
+            final_filters = [{
+                "filter_operator": "all",
+                "filters": filters
+            }]
+        else:
+            final_filters = filters
+
+        # Add any additional filters
+        if additional_filters:
+            if final_filters and isinstance(final_filters[0], dict):
+                final_filters[0]["filters"].extend(additional_filters)
+            else:
+                final_filters.extend(additional_filters)
+
+        # Use specified fields or page columns
+        query_fields = fields if fields is not None else columns
+
+        # Debug output
+        logger.debug(f"Entity Type: {entity_type}")
+        logger.debug(f"Fields: {query_fields}")
+        from pprint import pformat
+        logger.debug(f"Filters: {pformat(final_filters)}")
+
+        # Find and yield entities
+        yield from self.yield_find(
+            entity_type,
+            filters=final_filters,
+            fields=query_fields
+        )
 
     def _process_page_filters(self, filters: Dict) -> List[Union[Dict, List]]:
         """
@@ -369,7 +460,12 @@ class FPT(BaseShotgun):
 
         def process_condition(condition: Dict) -> Optional[Union[Dict, List]]:
             # Skip inactive conditions
-            if condition.get("active") == "false":
+            # Convert string "false" to boolean False
+            if str(condition.get("active", "true")).lower() == "false":
+                return None
+
+            # Skip if selected is False
+            if isinstance(condition.get("selected"), bool) and not condition["selected"]:
                 return None
 
             # Handle nested conditions
@@ -448,101 +544,6 @@ class FPT(BaseShotgun):
 
         return final_filters
 
-    def _yield_page_entities(
-            self,
-            page_id: int,
-            additional_filters: Optional[List] = None,
-            fields: Optional[List[str]] = None,
-    ) -> Iterator[Entity]:
-        """
-        Yield entities from a page with proper filter processing.
-
-        :param page_id: ID of the page to process
-        :param additional_filters: Additional filters to apply
-        :param fields: Fields to retrieve
-        :yields: Entities found
-        """
-        # Get page settings
-        page = self.find_one("Page", [["id", "is", page_id]], ["id"])
-        if not page:
-            raise ValueError(f"Page {page_id} not found")
-
-        page_settings = self.find(
-            "PageSetting",
-            [["page", "is", page]],
-            ["settings_json"]
-        )
-
-        # Process settings to get entity type and columns
-        entity_type = None
-        columns = None
-        filters = []
-
-        if page_settings:
-            # Check first settings for structure and basic info
-            first_settings = page_settings[0]["settings_json"]
-
-            # Find entity type - it could be anywhere in the structure
-            entity_types = self._find_in_dict(first_settings, "entity_type")
-            entity_type = next((et for et in entity_types if et), None)
-
-            # Find columns - could be in different places
-            all_columns = self._find_in_dict(first_settings, "columns")
-            columns = next((cols for cols in all_columns if isinstance(cols, list)), None)
-
-            # Get filters from both first and last settings
-            filter_sources = []
-
-            # Process first settings for initial filters
-            filter_sources.extend(self._find_in_dict(first_settings, "filters"))
-            filter_sources.extend(self._find_in_dict(first_settings, "panel_filters"))
-
-            # Process last settings for most recent filter state
-            if len(page_settings) > 1:
-                last_settings = page_settings[-1]["settings_json"]
-                filter_sources.extend(self._find_in_dict(last_settings, "filters"))
-                filter_sources.extend(self._find_in_dict(last_settings, "panel_filters"))
-
-            # Process each filter source
-            for filter_source in filter_sources:
-                if isinstance(filter_source, dict):
-                    filters.extend(self._process_page_filters(filter_source))
-
-        if not entity_type:
-            raise ValueError("Could not determine entity type from page settings")
-
-        # Wrap all filters in an 'all' operator if there are multiple
-        if len(filters) > 1:
-            final_filters = [{
-                "filter_operator": "all",
-                "filters": filters
-            }]
-        else:
-            final_filters = filters
-
-        # Add any additional filters
-        if additional_filters:
-            if final_filters and isinstance(final_filters[0], dict):
-                final_filters[0]["filters"].extend(additional_filters)
-            else:
-                final_filters.extend(additional_filters)
-
-        # Use specified fields or page columns
-        query_fields = fields if fields is not None else columns
-
-        # Debug output
-        print(f"Entity Type: {entity_type}")
-        print(f"Fields: {query_fields}")
-        from pprint import pformat
-        print(f"Filters: {pformat(final_filters)}")
-
-        # Find and yield entities
-        yield from self.find(
-            entity_type,
-            filters=final_filters,
-            fields=query_fields
-        )
-
     def _process_query_fields(
         self, entities: List[Entity], args: Tuple, kwargs: Dict
     ) -> List[Entity]:
@@ -578,8 +579,7 @@ class FPT(BaseShotgun):
             return entities
 
         # Process all entities and fields in parallel
-        max_workers = min(8, len(entities) * len(query_fields))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             futures = []
             for entity in entities:
                 for field_name, field_schema in query_fields.items():
