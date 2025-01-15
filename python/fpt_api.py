@@ -187,7 +187,7 @@ class FPT(BaseShotgun):
         )
 
     def find(self, *args: Any, **kwargs: Any) -> List[Entity]:
-        """Enhanced find method that handles dotted query fields.
+        """Find entities with parallel query field processing.
 
         Returns:
             List of matching entities with resolved fields
