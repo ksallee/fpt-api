@@ -333,6 +333,216 @@ class FPT(BaseShotgun):
 
                 yield result_entity
 
+    def _find_in_dict(self, obj: Any, target_key: str) -> List[Any]:
+        """
+        Recursively find all values for a given key in a nested dictionary/list structure.
+
+        :param obj: Object to search through (dict, list, or other)
+        :param target_key: Key to find
+        :returns: List of found values
+        """
+        results = []
+
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key == target_key:
+                    results.append(value)
+                results.extend(self._find_in_dict(value, target_key))
+        elif isinstance(obj, list):
+            for item in obj:
+                results.extend(self._find_in_dict(item, target_key))
+
+        return results
+
+    def _process_page_filters(self, filters: Dict) -> List[Union[Dict, List]]:
+        """
+        Process page filters into a format compatible with the FPT API.
+
+        :param filters: Raw page filters
+        :returns: List of processed filter conditions
+        """
+        if not filters or "conditions" not in filters:
+            return []
+
+        processed = []
+        project_filters = []
+
+        def process_condition(condition: Dict) -> Optional[Union[Dict, List]]:
+            # Skip inactive conditions
+            if condition.get("active") == "false":
+                return None
+
+            # Handle nested conditions
+            if "conditions" in condition:
+                nested_filters = []
+                for nested_condition in condition["conditions"]:
+                    # Check for project filter first
+                    if nested_condition.get("top_level_project_filter"):
+                        project_result = process_condition(nested_condition)
+                        if project_result:
+                            if isinstance(project_result, list):
+                                project_filters.append(project_result)
+                            else:
+                                project_filters.extend(project_result.get("filters", []))
+                        continue
+
+                    nested_result = process_condition(nested_condition)
+                    if nested_result:
+                        nested_filters.append(nested_result)
+
+                if nested_filters:
+                    operator = "any" if condition.get("logical_operator") == "or" else "all"
+                    return {
+                        "filter_operator": operator,
+                        "filters": nested_filters
+                    }
+                return None
+
+            # Process individual condition
+            if all(key in condition for key in ["path", "relation", "values"]):
+                # Skip empty values
+                if not condition["values"] or condition["values"][0] == "":
+                    return None
+
+                value = condition["values"][0]
+
+                # Handle entity references
+                if isinstance(value, dict):
+                    if value.get("valid") == "parent_entity_token":
+                        return None
+                    if "type" in value and "id" in value:
+                        value = {
+                            "type": value["type"],
+                            "id": value["id"]
+                        }
+
+                # Skip step conditions as they're handled separately
+                if condition["path"] == "step":
+                    return None
+
+                return [condition["path"], condition["relation"], value]
+
+            return None
+
+        # Process all conditions
+        for condition in filters["conditions"]:
+            result = process_condition(condition)
+            if result:
+                processed.append(result)
+
+        # Combine project filters with other filters
+        final_filters = []
+
+        # Add project filters first
+        if project_filters:
+            if len(project_filters) > 1:
+                final_filters.append({
+                    "filter_operator": "all",
+                    "filters": project_filters
+                })
+            else:
+                final_filters.extend(project_filters)
+
+        # Add other filters
+        final_filters.extend(processed)
+
+        return final_filters
+
+    def _yield_page_entities(
+            self,
+            page_id: int,
+            additional_filters: Optional[List] = None,
+            fields: Optional[List[str]] = None,
+    ) -> Iterator[Entity]:
+        """
+        Yield entities from a page with proper filter processing.
+
+        :param page_id: ID of the page to process
+        :param additional_filters: Additional filters to apply
+        :param fields: Fields to retrieve
+        :yields: Entities found
+        """
+        # Get page settings
+        page = self.find_one("Page", [["id", "is", page_id]], ["id"])
+        if not page:
+            raise ValueError(f"Page {page_id} not found")
+
+        page_settings = self.find(
+            "PageSetting",
+            [["page", "is", page]],
+            ["settings_json"]
+        )
+
+        # Process settings to get entity type and columns
+        entity_type = None
+        columns = None
+        filters = []
+
+        if page_settings:
+            # Check first settings for structure and basic info
+            first_settings = page_settings[0]["settings_json"]
+
+            # Find entity type - it could be anywhere in the structure
+            entity_types = self._find_in_dict(first_settings, "entity_type")
+            entity_type = next((et for et in entity_types if et), None)
+
+            # Find columns - could be in different places
+            all_columns = self._find_in_dict(first_settings, "columns")
+            columns = next((cols for cols in all_columns if isinstance(cols, list)), None)
+
+            # Get filters from both first and last settings
+            filter_sources = []
+
+            # Process first settings for initial filters
+            filter_sources.extend(self._find_in_dict(first_settings, "filters"))
+            filter_sources.extend(self._find_in_dict(first_settings, "panel_filters"))
+
+            # Process last settings for most recent filter state
+            if len(page_settings) > 1:
+                last_settings = page_settings[-1]["settings_json"]
+                filter_sources.extend(self._find_in_dict(last_settings, "filters"))
+                filter_sources.extend(self._find_in_dict(last_settings, "panel_filters"))
+
+            # Process each filter source
+            for filter_source in filter_sources:
+                if isinstance(filter_source, dict):
+                    filters.extend(self._process_page_filters(filter_source))
+
+        if not entity_type:
+            raise ValueError("Could not determine entity type from page settings")
+
+        # Wrap all filters in an 'all' operator if there are multiple
+        if len(filters) > 1:
+            final_filters = [{
+                "filter_operator": "all",
+                "filters": filters
+            }]
+        else:
+            final_filters = filters
+
+        # Add any additional filters
+        if additional_filters:
+            if final_filters and isinstance(final_filters[0], dict):
+                final_filters[0]["filters"].extend(additional_filters)
+            else:
+                final_filters.extend(additional_filters)
+
+        # Use specified fields or page columns
+        query_fields = fields if fields is not None else columns
+
+        # Debug output
+        print(f"Entity Type: {entity_type}")
+        print(f"Fields: {query_fields}")
+        from pprint import pformat
+        print(f"Filters: {pformat(final_filters)}")
+
+        # Find and yield entities
+        yield from self.find(
+            entity_type,
+            filters=final_filters,
+            fields=query_fields
+        )
+
     def _process_query_fields(
         self, entities: List[Entity], args: Tuple, kwargs: Dict
     ) -> List[Entity]:
