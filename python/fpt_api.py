@@ -45,7 +45,9 @@ else:
 
 
 class FPT(BaseShotgun):
-    """Thread-safe FPT client with parallel query field processing."""
+    """
+    Thread-safe FPT client with parallel query field processing.
+    """
 
     def __init__(
         self,
@@ -55,7 +57,8 @@ class FPT(BaseShotgun):
         connect: bool = True,
         **kwargs: Any
     ) -> None:
-        """Initialize a new FPT client.
+        """
+        Initialize a new FPT client.
 
         :param from_handle: Existing FPT instance to copy settings from
         :param timeout_secs: Connection timeout in seconds
@@ -106,7 +109,8 @@ class FPT(BaseShotgun):
     def _http_request(
         self, verb: str, path: str, body: Any, headers: Dict[str, str]
     ) -> Tuple[Tuple[int, str], Dict[str, str], bytes]:
-        """Make an HTTP request to the FPT server.
+        """
+        Make an HTTP request to the FPT server.
 
         :param verb: HTTP method to use
         :param path: Request path
@@ -145,13 +149,21 @@ class FPT(BaseShotgun):
         return http_status, resp_headers, resp_body
 
     def _get_connection(self) -> urllib3.PoolManager:
-        """Get or create a connection pool manager."""
+        """
+        Get or create a connection pool manager.
+
+        :returns: Connection pool manager.
+        """
         if not hasattr(self, "_connection") or self._connection is None:
             self._connection = self._get_urllib3_manager()
         return self._connection
 
     def _get_urllib3_manager(self) -> urllib3.PoolManager:
-        """Create a new connection pool manager."""
+        """
+        Create a new connection pool manager.
+
+        :returns: Connection pool manager.
+        """
         if self.config.proxy_server:
             # Handle proxy authentication
             proxy_headers = None
@@ -324,7 +336,8 @@ class FPT(BaseShotgun):
     def _process_query_fields(
         self, entities: List[Entity], args: Tuple, kwargs: Dict
     ) -> List[Entity]:
-        """Process query fields for multiple entities in parallel.
+        """
+        Process query fields for multiple entities in parallel.
 
         :param entities: List of entities to process
         :param args: Original find arguments
@@ -383,12 +396,11 @@ class FPT(BaseShotgun):
             dotted_query_map: Dict[str, Tuple[str, str, str]],
             executor: ThreadPoolExecutor
     ) -> Tuple[List[Tuple[Future, str]], Entity]:
-        """Process query fields for a single entity.
+        """
+        Process query fields for a single entity.
 
-        Returns:
-            Tuple of:
-            - List of (future, field_name) tuples
-            - Modified entity with any necessary additions
+        :returns: A tuple (futures, result_entity)
+            where futures is a list of (future, field_name) tuples.
         """
         result_entity = entity.copy()
         futures = []
@@ -438,7 +450,8 @@ class FPT(BaseShotgun):
     def _resolve_query_field(
         self, field_name: str, field_schema: Dict, parent_entity: Dict
     ) -> str:
-        """Resolve a single query field value.
+        """
+        Resolve a single query field value.
 
         :param field_name: Name of the field to resolve
         :param field_schema: Schema definition for the field
@@ -489,16 +502,10 @@ class FPT(BaseShotgun):
             args: Tuple,
             kwargs: Dict[str, Any]
     ) -> Tuple[str, List[str], Tuple, Dict[str, Any], Set[str], Dict[str, Tuple[str, str, str]]]:
-        """Prepare query fields and handle dotted fields.
+        """
+        Prepare query fields and handle dotted fields.
 
-        Returns:
-            Tuple of:
-            - entity_type: The type of entity being queried
-            - fields: List of fields to fetch
-            - modified_args: Updated args tuple
-            - modified_kwargs: Updated kwargs dict
-            - additional_fields: Set of helper fields added
-            - dotted_query_map: Mapping of dotted fields
+        :returns: tuple(entity_type, fields, modified_args, modified_kwargs, additional_fields, dotted_query_map)
         """
         # Extract query parameters
         if args:
@@ -541,7 +548,8 @@ class FPT(BaseShotgun):
     def _process_filters(
         self, filters: List[Dict], parent_entity: Dict
     ) -> List[Union[Dict, List]]:
-        """Process query filters into FPT API format.
+        """
+        Process query filters into FPT API format.
 
         :param filters: Raw filter conditions
         :param parent_entity: Parent entity reference
@@ -571,16 +579,13 @@ class FPT(BaseShotgun):
 
     def _get_dotted_query_fields(self, entity_type: str, fields: List[str]) -> Tuple[
         Set[str], Dict[str, Tuple[str, str, str]]]:
-        """Identify and parse dotted query fields.
+        """
+        Identify and parse dotted query fields.
 
-        Args:
-            entity_type: The base entity type being queried
-            fields: List of requested fields
-
-        Returns:
-            Tuple of:
-            - Set of additional fields needed for the initial query
-            - Dict mapping original dotted fields to (entity_type, link_field, query_field)
+        :param entity_type: The base entity type being queried
+        :param fields: List of requested fields
+        :returns: A tuple (additional_fields, dotted_query_map), with dotted_query_map a tuple
+            (linked_entity_type, link_path, query_field) for each dotted query field.
         """
         additional_fields = set()
         dotted_query_map = {}
@@ -613,11 +618,11 @@ class FPT(BaseShotgun):
             entities: List[Entity],
             dotted_query_map: Dict[str, Tuple[str, str, str]]
     ) -> None:
-        """Process dotted query fields for the given entities.
+        """
+        Process dotted query fields for the given entities.
 
-        Args:
-            entities: List of entities to process
-            dotted_query_map: Mapping of dotted fields to their components
+        :param entities: List of entities to process
+        :param dotted_query_map: Mapping of dotted fields to their components
         """
         if not entities or not dotted_query_map:
             return
@@ -668,7 +673,8 @@ class FPT(BaseShotgun):
     def _create_filter_array(
         self, condition: Dict, parent_entity: Dict
     ) -> Optional[List]:
-        """Create a filter array for a single condition.
+        """
+        Create a filter array for a single condition.
 
         :param condition: Filter condition
         :param parent_entity: Parent entity reference
@@ -706,7 +712,8 @@ class FPT(BaseShotgun):
     def _handle_record_query(
         self, entity_type: str, filters: List, field: str, summary_value: Dict
     ) -> str:
-        """Handle a record query field.
+        """
+        Handle a record query field.
 
         :param entity_type: Type of entity to query
         :param filters: Query filters to apply
@@ -752,7 +759,8 @@ class FPT(BaseShotgun):
     def _handle_aggregate_query(
             self, entity_type: str, filters: List, field: str, aggregate_type: str
     ) -> str:
-        """Handle an aggregate query field.
+        """
+        Handle an aggregate query field.
 
         :param entity_type: Type of entity to query
         :param filters: Query filters to apply
@@ -770,7 +778,8 @@ class FPT(BaseShotgun):
     def _handle_percentage_query(
             self, entity_type: str, filters: List, summary_type: str, field: str, summary_value: Union[Dict, str]
     ) -> str:
-        """Handle a percentage query field.
+        """
+        Handle a percentage query field.
 
         :param entity_type: Type of entity to query
         :param filters: Query filters to apply
@@ -789,7 +798,8 @@ class FPT(BaseShotgun):
         return f"{summary['summaries'][field]}% {value_str}"
 
     def _handle_count_query(self, entity_type: str, filters: List) -> str:
-        """Handle a count query field.
+        """
+        Handle a count query field.
 
         :param entity_type: Type of entity to query
         :param filters: Query filters to apply
@@ -803,7 +813,9 @@ class FPT(BaseShotgun):
         return str(summary["summaries"]["id"])
 
     def _close_connection(self) -> None:
-        """Close the current connection pool."""
+        """
+        Close the current connection pool.
+        """
         if self._connection is not None:
             self._connection.clear()
             self._connection = None
