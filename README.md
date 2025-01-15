@@ -9,6 +9,7 @@ A thread-safe wrapper around Flow Production Tracking (formerly ShotGrid) that e
 - ⚡ Parallel processing for improved performance
 - 🔄 Streaming results for processing large datasets
 - 🔌 Drop-in replacement for basic shotgun_api3 operations
+- • Supports dotted query fields, e.g. `entity.Shot.sg_assets_count`
 
 ## Installation
 
@@ -68,6 +69,13 @@ This wrapper addresses both issues by:
         ["code", "sg_status_list", "sg_query_field"]
     ):
         process_shot(shot)  # Process each shot as it becomes ready
+
+    # Get the value of a dotted query field
+    version = fpt.find_one(
+        "Version",
+        [["id", "is", 1234]],
+        ["entity.Shot.sg_assets_count"]
+    )
 
 ### API Reference
 
