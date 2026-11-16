@@ -570,10 +570,12 @@ class FPT(BaseShotgun):
 
         # Get query fields
         requested_fields = set(fields)
+        # A query field the server already filled in (Shot.open_notes_count, for example) is
+        # not computed again; it is filled in for every entity or for none, so the first tells.
         query_fields = {
             field: schema[field]
             for field in requested_fields
-            if field in schema and "query" in schema[field].get("properties", {})
+            if field in schema and "query" in schema[field].get("properties", {}) and not entities[0].get(field)
         }
         if not query_fields:
             return entities
