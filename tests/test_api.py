@@ -127,3 +127,11 @@ def test_find_one(fpt):
     # assert shot["sg_assets_count"] == "5"
     # assert shot["sg_one_asset"] == "Flash"
     # assert shot["sg_assets_status_percentage"] == "20% ip"
+
+
+def test_query_field_already_filled(fpt):
+    """A query field the server already returned is kept, not computed again."""
+    shot = fpt.create("Shot", {"code": "bunny_020_00"})
+    fpt._db["Shot"][shot["id"]]["sg_assets"] = "filled by the server"
+    found = fpt.find_one("Shot", [["id", "is", shot["id"]]], ["code", "sg_assets"])
+    assert found["sg_assets"] == "filled by the server"
